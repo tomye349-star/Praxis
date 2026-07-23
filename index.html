@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard</title>
+<style>
+  :root {
+    --font: system-ui, -apple-system, "Segoe UI", sans-serif;
+
+    /* warm "coffee" neutrals */
+    --page-plane: #f2e6d3;
+    --surface-1: #fbf3e6;
+    --surface-raised: #fffbf3;
+    --text-primary: #2b1c12;   /* cocoa, not pure black */
+    --text-secondary: #6d5844; /* mocha */
+    --muted: #9c8a72;
+    --gridline: #e6d8bf;
+    --border: rgba(43,28,18,0.12);
+    --shadow: rgba(43,28,18,0.08);
+
+    /* kept exactly: category + urgency colour coding */
+    --blue: #2a78d6;    /* study */
+    --orange: #eb6834;  /* timetable */
+    --aqua: #1baf7a;    /* training/health */
+    --yellow: #eda100;  /* events */
+
+    --good: #146314;      --good-bg: #e6f6e6;
+    --warning: #8a5f00;   --warning-bg: #fdf1d8;
+    --serious: #b6461f;   --serious-bg: #fbe4da;
+    --critical: #b02e2e;  --critical-bg: #fbe1e1;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: var(--font);
+    color: var(--text-primary);
+    background-color: var(--page-plane);
+    background-image:
+      radial-gradient(circle at 1px 1px, rgba(43,28,18,0.05) 1px, transparent 0);
+    background-size: 22px 22px;
+  }
+
+  .page { max-width: 980px; margin: 0 auto; padding: 32px 24px 60px; }
+
+  /* header banner */
+  .banner {
+    position: relative;
+    background: linear-gradient(135deg, var(--surface-raised) 0%, #f3e4c8 100%);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    padding: 24px 26px;
+    margin-bottom: 24px;
+    overflow: hidden;
+    box-shadow: 0 6px 20px var(--shadow);
+  }
+  .banner::after {
+    content: "";
+    position: absolute;
+    right: -40px; top: -40px;
+    width: 160px; height: 160px;
+    border-radius: 50%;
+    border: 14px solid rgba(43,28,18,0.05);
+  }
+  .banner h1 { font-size: 23px; margin: 0 0 5px; letter-spacing: -0.2px; }
+  .banner p { margin: 0; color: var(--text-secondary); font-size: 14px; }
+
+  /* stat tiles */
+  .stat-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-bottom: 24px;
+  }
+  .stat-tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    padding: 18px;
+    box-shadow: 0 3px 10px var(--shadow);
+    border-top: 3px solid var(--accent);
+  }
+  .stat-tile.study { --accent: var(--blue); }
+  .stat-tile.timetable { --accent: var(--orange); }
+  .stat-tile.training { --accent: var(--aqua); }
+  .stat-tile.events { --accent: var(--yellow); }
+
+  .stat-tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .stat-tile .value { font-size: 25px; font-weight: 650; }
+  .stat-tile .sub { font-size: 12px; color: var(--muted); margin-top: 4px; }
+
+  /* section cards */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 20px;
+    box-shadow: 0 3px 10px var(--shadow);
+  }
+  .card h2 {
+    font-size: 15px;
+    margin: 0 0 14px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+  }
+  .icon-chip {
+    width: 26px; height: 26px;
+    border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px;
+    color: #fff;
+    background: var(--chip-color);
+    flex-shrink: 0;
+  }
+  .card.timetable .icon-chip { --chip-color: var(--orange); }
+  .card.study .icon-chip { --chip-color: var(--blue); }
+  .card.training .icon-chip { --chip-color: var(--aqua); }
+  .card.upcoming .icon-chip { --chip-color: var(--yellow); }
+
+  .row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 9px 0;
+    border-bottom: 1px dashed var(--gridline);
+    font-size: 13px;
+  }
+  .row:last-child { border-bottom: none; }
+  .row .meta { color: var(--text-secondary); }
+
+  .badge {
+    font-size: 11px;
+    font-weight: 700;
+    padding: 4px 10px;
+    border-radius: 999px;
+    white-space: nowrap;
+  }
+  .badge.good { color: var(--good); background: var(--good-bg); }
+  .badge.warning { color: var(--warning); background: var(--warning-bg); }
+  .badge.serious { color: var(--serious); background: var(--serious-bg); }
+  .badge.critical { color: var(--critical); background: var(--critical-bg); }
+
+  .upcoming-strip { display: flex; gap: 10px; overflow-x: auto; margin-top: 16px; }
+  .upcoming-day {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px;
+    min-width: 130px;
+  }
+  .upcoming-day .d { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; font-weight: 600; }
+  .upcoming-day .item { font-size: 12px; margin-bottom: 4px; display: flex; gap: 6px; align-items: center; }
+
+  @media (max-width: 720px) {
+    .stat-row { grid-template-columns: repeat(2, 1fr); }
+    .grid { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="page">
+
+  <div class="banner">
+    <h1>Good afternoon, Tom</h1>
+    <p>Thursday, 23 July — 2 classes left today, 1 assignment due this week</p>
+  </div>
+
+  <div class="stat-row">
+    <div class="stat-tile timetable">
+      <div class="label">Next up</div>
+      <div class="value">2:15pm</div>
+      <div class="sub">Chemistry — Room 4.12</div>
+    </div>
+    <div class="stat-tile study">
+      <div class="label">Study this week</div>
+      <div class="value">6h 40m</div>
+      <div class="sub">across 4 subjects</div>
+    </div>
+    <div class="stat-tile training">
+      <div class="label">Last workout</div>
+      <div class="value">42 min</div>
+      <div class="sub">Run · yesterday</div>
+    </div>
+    <div class="stat-tile events">
+      <div class="label">Most urgent</div>
+      <div class="value">2 days</div>
+      <div class="sub">Physics report due</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card timetable">
+      <h2><span class="icon-chip">🗓</span> Today &amp; this week</h2>
+      <div class="row"><span>2:15pm — Chemistry</span><span class="meta">Room 4.12</span></div>
+      <div class="row"><span>3:30pm — Study period</span><span class="meta">Library</span></div>
+      <div class="row"><span>Tomorrow, 9:00am — Physics</span><span class="meta">Room 2.04</span></div>
+      <div class="row"><span>Fri, 11:00am — Assembly</span><span class="meta">Hall</span></div>
+    </div>
+
+    <div class="card study">
+      <h2><span class="icon-chip">📚</span> Assignments</h2>
+      <div class="row"><span>Physics — Report</span><span class="badge critical">Due in 2d</span></div>
+      <div class="row"><span>English — Essay draft</span><span class="badge serious">Due in 5d</span></div>
+      <div class="row"><span>Chemistry — Prac writeup</span><span class="badge warning">Due in 9d</span></div>
+      <div class="row"><span>Maths — Problem set 4</span><span class="badge good">On track</span></div>
+    </div>
+
+    <div class="card training">
+      <h2><span class="icon-chip">🏃</span> Training &amp; recovery</h2>
+      <div class="row"><span>Run — 6.2km</span><span class="meta">Strava · yesterday</span></div>
+      <div class="row"><span>Ride — 28km</span><span class="meta">Garmin · Tue</span></div>
+      <div class="row"><span>Sleep — 7h 20m</span><span class="meta">Huawei · last night</span></div>
+      <div class="row"><span>Recovery status</span><span class="badge good">Ready to train</span></div>
+    </div>
+
+    <div class="card upcoming">
+      <h2><span class="icon-chip">✨</span> Coming up</h2>
+      <div class="upcoming-strip">
+        <div class="upcoming-day">
+          <div class="d">Fri</div>
+          <div class="item">📘 Essay draft due</div>
+          <div class="item">🏃 Planned run</div>
+        </div>
+        <div class="upcoming-day">
+          <div class="d">Sat</div>
+          <div class="item">🚴 Long ride</div>
+        </div>
+        <div class="upcoming-day">
+          <div class="d">Mon</div>
+          <div class="item">📗 Prac writeup due</div>
+          <div class="item">🏫 Excursion</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

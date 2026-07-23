@@ -1,0 +1,11 @@
+{
+  "_comment": "Placeholder shape for Canvas assignment data. Once Canvas API access is wired up, a GitHub Actions script will overwrite this file automatically. Urgency is computed from days-until-due + estimated effort.",
+  "generatedAt": "2026-07-23T00:00:00Z",
+  "active": [
+    { "subject": "Physics", "title": "Report", "dueInDays": 2, "urgency": "critical", "loggedMinutes": 45 },
+    { "subject": "English", "title": "Essay draft", "dueInDays": 5, "urgency": "serious", "loggedMinutes": 90 },
+    { "subject": "Chemistry", "title": "Prac writeup", "dueInDays": 9, "urgency": "warning", "loggedMinutes": 20 },
+    { "subject": "Maths", "title": "Problem set 4", "dueInDays": 14, "urgency": "good", "loggedMinutes": 0 }
+  ],
+  "archive": []
+}
