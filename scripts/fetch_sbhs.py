@@ -98,44 +98,136 @@ def fetch_timetable(access_token):
     return day.json(), full.json()
 
 
+def _to_12h(t):
+    """'09:25' -> '9:25am'. Falls back to the original string if it doesn't parse."""
+    try:
+        h, m = t.split(":")
+        h = int(h)
+        ampm = "am" if h < 12 else "pm"
+        h12 = h % 12 or 12
+        return f"{h12}:{m}{ampm}"
+    except Exception:
+        return t
+
+
+def _bell_time_lookup(bells):
+    """
+    bells: [{period/bell: '1', startTime: '09:25', ...}, ...] -> {'1': '09:25'}
+    Kept in raw 24-hour form here (zero-padded, so it sorts correctly as a
+    plain string) — converted to 12-hour display form separately, at the
+    point of building each period's "time" field, so sorting never has to
+    deal with "1:15pm" vs "10:25am" string-sorting wrong.
+    """
+    lookup = {}
+    for b in bells or []:
+        code = b.get("period") or b.get("bell")
+        start = b.get("startTime") or b.get("time")
+        if code and start:
+            lookup[code] = start
+    return lookup
+
+
+def _subject_title_lookup(subjects):
+    """
+    `subjects` is keyed oddly (e.g. "11CHE 3") and periods reference the
+    *shortTitle* ("CHE 3") instead, so index by shortTitle -> full subject name.
+    Accepts either the dict-of-codes shape (daytimetable.json) or the
+    list-of-subjects shape (timetable.json) — confirmed against real output
+    from both endpoints.
+    """
+    lookup = {}
+    values = subjects.values() if isinstance(subjects, dict) else (subjects if isinstance(subjects, list) else [])
+    for s in values:
+        if not isinstance(s, dict):
+            continue
+        short = s.get("shortTitle")
+        if short:
+            lookup[short] = s.get("subject") or s.get("title") or short
+    return lookup
+
+
+def _extract_day_periods(day_block, bells, subjects_lookup):
+    """
+    day_block shape (confirmed real output):
+      { dayname, routine, rollcall: {...}, periods: { "1": {title, teacher, room, ...}, ... }, dayNumber }
+    """
+    if not isinstance(day_block, dict):
+        return []
+    periods = day_block.get("periods") or {}
+    times = _bell_time_lookup(bells)  # raw "09:25"-style, for correct sorting
+    out = []
+    for period_code, info in periods.items():
+        if not isinstance(info, dict):
+            continue
+        short_title = info.get("title") or "Unknown"
+        raw_time = times.get(period_code, "")
+        out.append({
+            "time": _to_12h(raw_time) if raw_time else "",
+            "subject": subjects_lookup.get(short_title, short_title),
+            "location": info.get("room") or "",
+            "_sort": raw_time or "99:99",
+        })
+    out.sort(key=lambda p: p["_sort"])
+    for p in out:
+        p.pop("_sort", None)
+    return out
+
+
 def normalise(day_raw, full_raw):
     """
-    Best-effort transform into the shape the dashboard expects
-    ({today, week, lookAhead}). The Student Portal API docs Tom pasted don't
-    include a sample response body for these two endpoints, so the exact
-    field names here are an educated guess based on common timetable API
-    shapes, not a guarantee. The raw responses are always stored alongside
-    this (see main()) specifically so this function can be corrected later
-    by inspecting real output without needing to touch the OAuth/networking
-    code at all.
-    """
-    def extract_periods(raw):
-        # Try a few plausible shapes defensively rather than assuming one.
-        periods = raw.get("periods") or raw.get("timetable") or raw.get("bells") or []
-        out = []
-        for p in periods if isinstance(periods, list) else []:
-            out.append({
-                "time": p.get("time") or p.get("start") or p.get("period") or "",
-                "subject": p.get("subject") or p.get("title") or p.get("name") or "Unknown",
-                "location": p.get("room") or p.get("location") or "",
-            })
-        return out
+    Transform into the shape the dashboard expects ({today, week, lookAhead}).
 
+    Confirmed against real output from both endpoints (via a direct API call
+    against the stored sbhs_raw_daytimetable / sbhs_raw_timetable values):
+
+      daytimetable.json = {
+        status, date,
+        bells: [ {period, bell, startTime, endTime, type, bellDisplay}, ... ],
+        timetable: {
+          subjects: { "<yearcode>": {title, shortTitle, teacher, subject, ...} },
+          timetable: { dayname, routine, rollcall, periods: {"<periodCode>": {title, teacher, room, ...}}, dayNumber },
+          dayInfo: {...}
+        }
+      }
+
+      timetable.json = {
+        student, rollcall, advisor,
+        subjects: [ {title, shortTitle, teacher, subject, ...}, ... ],
+        days: <shape not confirmed yet — the full fortnight/cycle timetable>
+      }
+
+    The `today` mapping below is exact. The `week` mapping is still
+    best-effort since `timetable.json`'s `days` field wasn't confirmed from a
+    real sample — if it comes out empty, check `sbhs_raw_timetable` (GET
+    /api/kv/sbhs_raw_timetable) for the real `days` shape and adjust the
+    `days_block` handling below to match.
+    """
     try:
-        today = extract_periods(day_raw)
+        day_tt = (day_raw or {}).get("timetable") or {}
+        subjects_lookup = _subject_title_lookup(day_tt.get("subjects"))
+        today = _extract_day_periods(day_tt.get("timetable"), (day_raw or {}).get("bells"), subjects_lookup)
     except Exception:
         today = []
 
     try:
-        # `full_raw` is generally a list of days for the week/cycle; normalise
-        # defensively since we don't have a confirmed sample shape.
         week = []
-        days = full_raw if isinstance(full_raw, list) else full_raw.get("days", [])
-        for d in days:
-            week.append({
-                "day": d.get("day") or d.get("date") or "",
-                "items": extract_periods(d),
-            })
+        days_block = (full_raw or {}).get("days")
+        full_subjects_lookup = _subject_title_lookup((full_raw or {}).get("subjects"))
+        bells_for_week = (full_raw or {}).get("bells") or (day_raw or {}).get("bells")
+
+        if isinstance(days_block, dict):
+            entries = list(days_block.items())
+        elif isinstance(days_block, list):
+            entries = [(d.get("dayname") if isinstance(d, dict) else None, d) for d in days_block]
+        else:
+            entries = []
+
+        for key, day_block in entries:
+            periods = _extract_day_periods(day_block, bells_for_week, full_subjects_lookup)
+            if not periods:
+                continue
+            day_label = (day_block.get("dayname") if isinstance(day_block, dict) else None) or key or ""
+            week.append({"day": day_label, "items": periods})
     except Exception:
         week = []
 
