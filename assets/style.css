@@ -255,23 +255,76 @@ body {
   padding: 10px 0;
 }
 
-/* enriched timetable entry (today's list): time/subject/free-badge on one
-   line, teacher/room/substitution note on a smaller line below */
-.period-entry {
-  padding: 9px 0;
-  border-bottom: 1px dashed var(--gridline);
-}
-.period-entry:last-child { border-bottom: none; }
-.period-entry-top {
+/* "Time till next thing" card — a HighHelp-style widget: what's on now (or
+   next), and a big countdown to when it starts/ends. */
+.next-up-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 18px 20px;
+  margin-bottom: 16px;
+  box-shadow: 0 3px 10px var(--shadow);
 }
-.period-time { color: var(--text-secondary); font-size: 12px; min-width: 62px; flex-shrink: 0; }
-.period-subject { flex: 1; }
+.next-up-card.done { justify-content: flex-start; }
+.nu-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 4px; }
+.nu-title { font-size: 20px; font-weight: 750; line-height: 1.2; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.next-up-card.done .nu-title { font-size: 15px; font-weight: 650; color: var(--text-secondary); }
+.nu-subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 3px; }
+.nu-right { text-align: right; flex-shrink: 0; }
+.nu-countdown { font-size: 32px; font-weight: 800; line-height: 1; color: var(--text-primary); }
+.nu-until { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em; color: var(--critical); margin-top: 6px; }
+
+@media (max-width: 480px) {
+  .next-up-card { flex-direction: column; align-items: flex-start; }
+  .nu-right { text-align: left; }
+}
+
+/* Today's day-by-day rows — a slim time column plus either a coloured
+   "period card" (a real class: it has a teacher or room) or a plain muted
+   line (roll call, an empty period-0 slot, recess, lunch, etc.), the same
+   visual split HighHelp uses. */
+.day-row {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  padding: 4px 0;
+}
+.day-row-time {
+  flex: 0 0 60px;
+  text-align: right;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--text-secondary);
+  padding-top: 11px;
+}
+.day-row-plain {
+  flex: 1;
+  font-size: 12px;
+  color: var(--muted);
+  padding: 6px 2px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.period-card {
+  flex: 1;
+  position: relative;
+  background: var(--surface-1);
+  border-radius: 12px;
+  padding: 9px 12px 9px 16px;
+  border-left: 5px solid var(--chip-accent, var(--orange));
+}
+.period-card.cancelled { opacity: 0.6; }
+.pc-main { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.pc-subject { font-weight: 700; font-size: 14px; }
 .cancelled-subject { text-decoration: line-through; color: var(--muted); }
-.period-entry-meta { font-size: 11px; color: var(--text-secondary); margin-top: 3px; margin-left: 70px; }
+.pc-meta { display: flex; gap: 12px; margin-top: 3px; font-size: 12px; color: var(--text-secondary); }
+.pc-room { font-weight: 700; color: var(--text-primary); }
+.pc-note { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
 .badge.free { color: var(--muted); background: var(--gridline); }
 
 /* live "now" timeline strip above Today's list — a vertical timeline of
