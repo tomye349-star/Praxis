@@ -281,7 +281,18 @@ def _extract_day_periods(day_block, bells, subjects_lookup, variations=None, exc
     for period_code, info in periods.items():
         if not isinstance(info, dict) or period_code in exclude:
             continue
-        short_title = info.get("title") or "Unknown"
+        raw_title = (info.get("title") or "").strip()
+        if not raw_title:
+            # SBHS includes a dict entry for every possible period slot even
+            # when nothing's scheduled there that day (e.g. an unused period
+            # 0 on a day with no early class) — skip those placeholders
+            # entirely rather than showing an empty "Unknown" row. Roll call
+            # is the one exception: it's a real, always-on daily event even
+            # if its title comes back blank.
+            if period_code != "RC":
+                continue
+            raw_title = "Roll Call"
+        short_title = raw_title
         bell = times.get(period_code) or {}
         raw_time = bell.get("start", "")
         raw_end = bell.get("end", "")
