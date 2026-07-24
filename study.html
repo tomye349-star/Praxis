@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Study</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <nav class="tabnav">
+    <a href="index.html">Overview</a>
+    <a href="timetable.html">Timetable</a>
+    <a href="study.html">Study</a>
+    <a href="training.html">Training</a>
+    <a href="upcoming.html">Upcoming</a>
+  </nav>
+
+  <div class="page-header">
+    <h1>📚 Study</h1>
+    <a class="back" href="index.html">← Back to overview</a>
+  </div>
+
+  <div id="connectNotice"></div>
+
+  <div class="grid">
+    <div class="card study">
+      <h2>Active assignments</h2>
+      <div id="assignmentsList"><div class="empty-state">Loading…</div></div>
+
+      <details class="inline-toggle" open>
+        <summary>Add assignment</summary>
+        <form id="newAssignmentForm" class="mini-form" style="border-top:none;padding-top:0;margin-top:8px;">
+          <input id="newSubject" type="text" placeholder="Subject">
+          <input id="newTitle" type="text" placeholder="Title">
+          <input id="newDue" type="date">
+          <button type="submit">Add assignment</button>
+        </form>
+      </details>
+    </div>
+
+    <div class="card study">
+      <h2>Log study time</h2>
+      <form id="logForm" class="mini-form" style="margin-top:0;padding-top:0;border-top:none;">
+        <div class="mini-form-row">
+          <select id="logAssignment"><option value="">General study</option></select>
+          <input id="logMinutes" type="number" min="1" placeholder="mins">
+        </div>
+        <input id="logNote" type="text" placeholder="Note (optional)">
+        <button type="submit">Log time</button>
+      </form>
+
+      <h2 style="margin-top:22px;">Recent logs</h2>
+      <div id="recentLogsList"><div class="empty-state">Loading…</div></div>
+    </div>
+
+    <div class="card study" style="grid-column: 1 / -1;">
+      <h2 id="archiveHeading">Archive</h2>
+      <div id="archiveList"><div class="empty-state">Loading…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  function renderAssignments(list) {
+    const el = document.getElementById('assignmentsList');
+    if (!list || !list.length) {
+      el.innerHTML = '<div class="empty-state">No active assignments — add one below.</div>';
+      return;
+    }
+    el.innerHTML = list.map(function (a) {
+      const u = urgencyFor(a.due_date);
+      return '<div class="row"><span>' + escapeHtml(a.subject) + ' — ' + escapeHtml(a.title) +
+        ' <span class="meta">(' + fmtMinutes(a.loggedMinutes) + ' logged)</span></span>' +
+        '<span style="display:flex;align-items:center;gap:6px;">' +
+        '<span class="badge ' + u.band + '">' + u.label + '</span>' +
+        '<button class="mini-btn" title="Archive" onclick="archiveAssignment(\'' + a.id + '\')">📥</button>' +
+        '</span></div>';
+    }).join('');
+  }
+
+  function renderArchive(list) {
+    const heading = document.getElementById('archiveHeading');
+    const el = document.getElementById('archiveList');
+    heading.textContent = 'Archive (' + list.length + ')';
+    if (!list.length) {
+      el.innerHTML = '<div class="empty-state">Nothing archived yet.</div>';
+      return;
+    }
+    el.innerHTML = list.map(function (a) {
+      return '<div class="row"><span>' + escapeHtml(a.subject) + ' — ' + escapeHtml(a.title) + '</span>' +
+        '<span class="meta">' + fmtMinutes(a.loggedMinutes) + ' total</span></div>';
+    }).join('');
+  }
+
+  function renderRecentLogs(logs, assignments, archive) {
+    const el = document.getElementById('recentLogsList');
+    if (!logs || !logs.length) {
+      el.innerHTML = '<div class="empty-state">No study time logged yet.</div>';
+      return;
+    }
+    const titleFor = {};
+    (assignments || []).concat(archive || []).forEach(function (a) { titleFor[a.id] = a.subject + ' — ' + a.title; });
+    el.innerHTML = logs.slice(0, 8).map(function (l) {
+      const what = l.assignment_id ? (titleFor[l.assignment_id] || 'Assignment') : 'General study';
+      return '<div class="row"><span>' + escapeHtml(what) + (l.note ? ' <span class="meta">(' + escapeHtml(l.note) + ')</span>' : '') + '</span>' +
+        '<span class="meta">' + fmtMinutes(l.minutes) + '</span></div>';
+    }).join('');
+  }
+
+  function renderLogOptions(list) {
+    const sel = document.getElementById('logAssignment');
+    sel.innerHTML = '<option value="">General study</option>' + list.map(function (a) {
+      return '<option value="' + a.id + '">' + escapeHtml(a.subject) + ' — ' + escapeHtml(a.title) + '</option>';
+    }).join('');
+  }
+
+  async function loadState() {
+    if (!requireConnectionOrNotice('connectNotice')) {
+      document.getElementById('assignmentsList').innerHTML = '<div class="empty-state">Connect your backend to see assignments.</div>';
+      document.getElementById('archiveList').innerHTML = '';
+      document.getElementById('recentLogsList').innerHTML = '';
+      return;
+    }
+    try {
+      const state = await apiFetch('/api/state');
+      renderAssignments(state.assignments);
+      renderArchive(state.archive);
+      renderLogOptions(state.assignments);
+      renderRecentLogs(state.recentLogs, state.assignments, state.archive);
+    } catch (err) {
+      document.getElementById('connectNotice').innerHTML =
+        '<div class="notice">Couldn\'t reach your backend (' + err.message + ') — <a href="index.html">check connection</a>.</div>';
+    }
+  }
+
+  async function submitLog(ev) {
+    ev.preventDefault();
+    const assignmentId = document.getElementById('logAssignment').value || null;
+    const minutes = Number(document.getElementById('logMinutes').value);
+    const note = document.getElementById('logNote').value.trim();
+    if (!minutes || minutes <= 0) { alert('Enter how many minutes you studied.'); return; }
+    try {
+      await apiFetch('/api/log', { method: 'POST', body: JSON.stringify({ assignmentId: assignmentId, minutes: minutes, note: note }) });
+      document.getElementById('logMinutes').value = '';
+      document.getElementById('logNote').value = '';
+      loadState();
+    } catch (err) {
+      alert('Could not save: ' + err.message);
+    }
+  }
+
+  async function submitAssignment(ev) {
+    ev.preventDefault();
+    const subject = document.getElementById('newSubject').value.trim();
+    const title = document.getElementById('newTitle').value.trim();
+    const dueDate = document.getElementById('newDue').value;
+    if (!subject || !title) { alert('Subject and title are both required.'); return; }
+    try {
+      await apiFetch('/api/assignments', { method: 'POST', body: JSON.stringify({ subject: subject, title: title, dueDate: dueDate }) });
+      document.getElementById('newSubject').value = '';
+      document.getElementById('newTitle').value = '';
+      document.getElementById('newDue').value = '';
+      loadState();
+    } catch (err) {
+      alert('Could not save: ' + err.message);
+    }
+  }
+
+  async function archiveAssignment(id) {
+    try {
+      await apiFetch('/api/archive/' + id, { method: 'POST' });
+      loadState();
+    } catch (err) {
+      alert('Could not archive: ' + err.message);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', function () {
+    document.getElementById('logForm').addEventListener('submit', submitLog);
+    document.getElementById('newAssignmentForm').addEventListener('submit', submitAssignment);
+    loadState();
+  });
+</script>
+
+</body>
+</html>

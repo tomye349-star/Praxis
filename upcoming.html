@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Upcoming</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <nav class="tabnav">
+    <a href="index.html">Overview</a>
+    <a href="timetable.html">Timetable</a>
+    <a href="study.html">Study</a>
+    <a href="training.html">Training</a>
+    <a href="upcoming.html">Upcoming</a>
+  </nav>
+
+  <div class="page-header">
+    <h1>✨ Coming up</h1>
+    <a class="back" href="index.html">← Back to overview</a>
+  </div>
+
+  <div id="connectNotice"></div>
+
+  <div class="grid single">
+    <div class="card upcoming">
+      <h2>Next 14 days</h2>
+      <div class="upcoming-list" id="upcomingList"><div class="empty-state">Loading…</div></div>
+    </div>
+  </div>
+
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  // Built from real assignment due dates (and, once look-ahead timetable data
+  // exists, that too) rather than being static — so this actually reflects
+  // what's really coming up.
+  function renderUpcoming(assignments, lookAhead) {
+    const el = document.getElementById('upcomingList');
+    const byDate = {};
+
+    (assignments || []).forEach(function (a) {
+      if (!a.due_date) return;
+      (byDate[a.due_date] = byDate[a.due_date] || []).push({ icon: '📘', text: a.subject + ' — ' + a.title + ' due' });
+    });
+    (lookAhead || []).forEach(function (item) {
+      if (!item.date) return;
+      (byDate[item.date] = byDate[item.date] || []).push({ icon: '🗓', text: item.subject || item.title || 'Scheduled item' });
+    });
+
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const cutoff = new Date(today.getTime() + 14 * 24 * 60 * 60 * 1000);
+    const dates = Object.keys(byDate)
+      .filter(function (d) { const dt = new Date(d + 'T00:00:00'); return dt >= today && dt <= cutoff; })
+      .sort();
+
+    if (!dates.length) {
+      el.innerHTML = '<div class="empty-state">Nothing due or scheduled in the next 14 days.</div>';
+      return;
+    }
+
+    el.innerHTML = dates.map(function (d) {
+      const dt = new Date(d + 'T00:00:00');
+      const label = dt.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+      return '<div class="upcoming-day"><div class="d">' + label + '</div>' +
+        byDate[d].map(function (item) {
+          return '<div class="item">' + item.icon + ' ' + escapeHtml(item.text) + '</div>';
+        }).join('') + '</div>';
+    }).join('');
+  }
+
+  async function loadState() {
+    if (!requireConnectionOrNotice('connectNotice')) {
+      document.getElementById('upcomingList').innerHTML = '<div class="empty-state">Connect your backend to see what\'s coming up.</div>';
+      return;
+    }
+    try {
+      const state = await apiFetch('/api/state');
+      const lookAhead = state.timetable ? state.timetable.lookAhead : [];
+      renderUpcoming(state.assignments, lookAhead);
+    } catch (err) {
+      document.getElementById('connectNotice').innerHTML =
+        '<div class="notice">Couldn\'t reach your backend (' + err.message + ') — <a href="index.html">check connection</a>.</div>';
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', loadState);
+</script>
+
+</body>
+</html>

@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Training</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <nav class="tabnav">
+    <a href="index.html">Overview</a>
+    <a href="timetable.html">Timetable</a>
+    <a href="study.html">Study</a>
+    <a href="training.html">Training</a>
+    <a href="upcoming.html">Upcoming</a>
+  </nav>
+
+  <div class="page-header">
+    <h1>🏃 Training &amp; recovery</h1>
+    <a class="back" href="index.html">← Back to overview</a>
+  </div>
+
+  <div id="connectNotice"></div>
+
+  <div class="grid single">
+    <div class="card training">
+      <div class="section-block">
+        <h3>Recovery status</h3>
+        <div id="recoveryRow"><div class="empty-state">Loading…</div></div>
+      </div>
+      <div class="section-block">
+        <h3>Recent activity</h3>
+        <div id="activityList"><div class="empty-state">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="notice" style="margin-top:16px;">
+    Strava, Garmin, and Huawei Health syncing (with duplicate-ride cleanup between Garmin/Huawei) is the next
+    build phase — this page is wired up to show real data the moment that lands, but shows example rows until then.
+  </div>
+
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  const DEMO_ACTIVITIES = {
+    recoveryStatus: { band: 'good', label: 'Ready to train' },
+    recent: [
+      { title: 'Run — 6.2km', source: 'Strava', when: 'yesterday', duration: '42 min' },
+      { title: 'Ride — 28km', source: 'Garmin', when: 'Tue', duration: '58 min' },
+      { title: 'Sleep — 7h 20m', source: 'Huawei', when: 'last night', duration: null },
+    ],
+  };
+
+  function renderTraining(activities, isDemo) {
+    const recEl = document.getElementById('recoveryRow');
+    const listEl = document.getElementById('activityList');
+    const a = activities || DEMO_ACTIVITIES;
+
+    if (a.recoveryStatus) {
+      recEl.innerHTML = '<div class="row"><span>' + (isDemo ? 'Example data' : 'Current status') + '</span>' +
+        '<span class="badge ' + a.recoveryStatus.band + '">' + escapeHtml(a.recoveryStatus.label) + '</span></div>';
+    } else {
+      recEl.innerHTML = '<div class="empty-state">No recovery data yet.</div>';
+    }
+
+    if (!a.recent || !a.recent.length) {
+      listEl.innerHTML = '<div class="empty-state">No activity data yet.</div>';
+      return;
+    }
+    listEl.innerHTML = a.recent.map(function (act) {
+      return '<div class="row"><span>' + escapeHtml(act.title) + '</span>' +
+        '<span class="meta">' + escapeHtml(act.source) + ' · ' + escapeHtml(act.when) + '</span></div>';
+    }).join('');
+  }
+
+  async function loadState() {
+    if (!requireConnectionOrNotice('connectNotice')) {
+      renderTraining(DEMO_ACTIVITIES, true);
+      return;
+    }
+    try {
+      const state = await apiFetch('/api/state');
+      if (state.activities) {
+        renderTraining(state.activities, false);
+      } else {
+        renderTraining(DEMO_ACTIVITIES, true);
+      }
+    } catch (err) {
+      document.getElementById('connectNotice').innerHTML =
+        '<div class="notice">Couldn\'t reach your backend (' + err.message + ') — <a href="index.html">check connection</a>.</div>';
+      renderTraining(DEMO_ACTIVITIES, true);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', loadState);
+</script>
+
+</body>
+</html>
