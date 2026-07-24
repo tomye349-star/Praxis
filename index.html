@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard — Overview</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+
+<div class="page">
+
+  <div class="banner">
+    <h1>Good afternoon, Tom</h1>
+    <p id="bannerSub">Quick glance below — click into any section for the full picture.</p>
+  </div>
+
+  <nav class="tabnav">
+    <a href="index.html">Overview</a>
+    <a href="timetable.html">Timetable</a>
+    <a href="study.html">Study</a>
+    <a href="training.html">Training</a>
+    <a href="upcoming.html">Upcoming</a>
+  </nav>
+
+  <details id="connectPanel">
+    <summary>⚙ Connect your backend</summary>
+    <p style="font-size:13px;color:var(--text-secondary);margin:0 0 12px;">
+      One-time setup so study logging and assignments actually save. Deploy the free
+      Cloudflare Worker described in <code>WORKER_SETUP.md</code> first, then paste its URL and your
+      access token below — it's remembered on this device/browser from then on, on every page.
+    </p>
+    <div style="display:flex;flex-direction:column;gap:8px;max-width:440px;">
+      <input id="apiUrlInput" type="text" placeholder="API URL (e.g. https://personal-dashboard-api.xxx.workers.dev)">
+      <input id="apiTokenInput" type="password" placeholder="Access token">
+      <button type="button" onclick="saveConnection()">Save &amp; connect</button>
+    </div>
+  </details>
+  <div id="connectStatus">Showing example data — open "Connect your backend" above once it's deployed.</div>
+
+  <div class="stat-row">
+    <div class="stat-tile timetable">
+      <div class="label">Next up</div>
+      <div class="value" id="nextUpValue">2:15pm</div>
+      <div class="sub" id="nextUpSub">Chemistry — Room 4.12</div>
+    </div>
+    <div class="stat-tile study">
+      <div class="label">Study this week</div>
+      <div class="value" id="studyWeekValue">6h 40m</div>
+      <div class="sub" id="studyWeekSub">across 4 subjects</div>
+    </div>
+    <div class="stat-tile training">
+      <div class="label">Last workout</div>
+      <div class="value" id="lastWorkoutValue">42 min</div>
+      <div class="sub" id="lastWorkoutSub">Run · yesterday</div>
+    </div>
+    <div class="stat-tile events">
+      <div class="label">Most urgent</div>
+      <div class="value" id="urgentValue">2 days</div>
+      <div class="sub" id="urgentSub">Physics report due</div>
+    </div>
+  </div>
+
+  <div class="grid">
+    <div class="card timetable">
+      <h2><span class="icon-chip">🗓</span> Today &amp; this week</h2>
+      <div id="timetablePreview">
+        <div class="row"><span>2:15pm — Chemistry</span><span class="meta">Room 4.12</span></div>
+        <div class="row"><span>3:30pm — Study period</span><span class="meta">Library</span></div>
+      </div>
+      <a class="view-all" href="timetable.html">View full timetable →</a>
+    </div>
+
+    <div class="card study">
+      <h2><span class="icon-chip">📚</span> Study</h2>
+      <div id="assignmentsPreview">
+        <div class="row"><span>Physics — Report</span><span class="badge critical">Due in 2d</span></div>
+        <div class="row"><span>English — Essay draft</span><span class="badge serious">Due in 5d</span></div>
+        <div class="row"><span>Chemistry — Prac writeup</span><span class="badge warning">Due in 9d</span></div>
+      </div>
+
+      <form id="logForm" class="mini-form">
+        <div class="mini-form-row">
+          <select id="logAssignment"><option value="">General study</option></select>
+          <input id="logMinutes" type="number" min="1" placeholder="mins">
+        </div>
+        <input id="logNote" type="text" placeholder="Note (optional)">
+        <button type="submit">Log time</button>
+      </form>
+
+      <a class="view-all" href="study.html">View all assignments &amp; archive →</a>
+    </div>
+
+    <div class="card training">
+      <h2><span class="icon-chip">🏃</span> Training &amp; recovery</h2>
+      <div id="trainingPreview">
+        <div class="row"><span>Run — 6.2km</span><span class="meta">Strava · yesterday</span></div>
+        <div class="row"><span>Recovery status</span><span class="badge good">Ready to train</span></div>
+      </div>
+      <a class="view-all" href="training.html">View training &amp; recovery →</a>
+    </div>
+
+    <div class="card upcoming">
+      <h2><span class="icon-chip">✨</span> Coming up</h2>
+      <div class="upcoming-strip" id="upcomingPreview">
+        <div class="upcoming-day">
+          <div class="d">Fri</div>
+          <div class="item">📘 Essay draft due</div>
+        </div>
+        <div class="upcoming-day">
+          <div class="d">Sat</div>
+          <div class="item">🚴 Long ride</div>
+        </div>
+      </div>
+      <a class="view-all" href="upcoming.html">View full look-ahead →</a>
+    </div>
+  </div>
+
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  function renderAssignmentsPreview(list) {
+    const el = document.getElementById('assignmentsPreview');
+    if (!list || !list.length) {
+      el.innerHTML = '<div class="empty-state">No active assignments.</div>';
+      return;
+    }
+    el.innerHTML = list.slice(0, 3).map(function (a) {
+      const u = urgencyFor(a.due_date);
+      return '<div class="row"><span>' + escapeHtml(a.subject) + ' — ' + escapeHtml(a.title) + '</span>' +
+        '<span class="badge ' + u.band + '">' + u.label + '</span></div>';
+    }).join('');
+  }
+
+  function renderTimetablePreview(timetable) {
+    const el = document.getElementById('timetablePreview');
+    if (!timetable || !timetable.today || !timetable.today.length) {
+      el.innerHTML = '<div class="empty-state">Nothing left today.</div>';
+      return;
+    }
+    el.innerHTML = timetable.today.slice(0, 3).map(function (p) {
+      const subjClass = p.cancelled ? 'cancelled-subject' : '';
+      const freeBadge = p.cancelled ? ' <span class="badge free">Free</span>' : '';
+      return '<div class="row"><span>' + escapeHtml(p.time) + ' — <span class="' + subjClass + '">' + escapeHtml(p.subject) + '</span>' + freeBadge + '</span>' +
+        '<span class="meta">' + escapeHtml(p.location || '') + '</span></div>';
+    }).join('');
+
+    // "Next up" should skip cancelled periods — a free period isn't what's
+    // actually happening next.
+    const nextUp = timetable.today.find(function (p) { return !p.cancelled; });
+    if (nextUp) {
+      document.getElementById('nextUpValue').textContent = nextUp.time;
+      document.getElementById('nextUpSub').textContent = nextUp.subject + (nextUp.location ? ' — ' + nextUp.location : '');
+    } else {
+      document.getElementById('nextUpValue').textContent = '—';
+      document.getElementById('nextUpSub').textContent = 'Nothing left today';
+    }
+  }
+
+  function renderTrainingPreview(activities) {
+    const el = document.getElementById('trainingPreview');
+    if (!activities || !activities.recent || !activities.recent.length) {
+      el.innerHTML = '<div class="empty-state">No activity data yet — Strava/Garmin/Huawei sync is a future phase.</div>';
+      return;
+    }
+    el.innerHTML = activities.recent.slice(0, 2).map(function (act) {
+      return '<div class="row"><span>' + escapeHtml(act.title) + '</span>' +
+        '<span class="meta">' + escapeHtml(act.source) + ' · ' + escapeHtml(act.when) + '</span></div>';
+    }).join('');
+    if (activities.recoveryStatus) {
+      document.getElementById('lastWorkoutValue').textContent = activities.recent[0].duration || '—';
+      document.getElementById('lastWorkoutSub').textContent = activities.recent[0].title + ' · ' + activities.recent[0].when;
+    }
+  }
+
+  function renderUpcomingPreview(assignments) {
+    const el = document.getElementById('upcomingPreview');
+    if (!assignments || !assignments.length) {
+      el.innerHTML = '<div class="empty-state">Nothing coming up.</div>';
+      return;
+    }
+    const byDay = {};
+    assignments.forEach(function (a) {
+      if (!a.due_date) return;
+      const d = new Date(a.due_date + 'T00:00:00');
+      const key = d.toLocaleDateString(undefined, { weekday: 'short' });
+      (byDay[key] = byDay[key] || []).push(a);
+    });
+    const days = Object.keys(byDay).slice(0, 3);
+    if (!days.length) { el.innerHTML = '<div class="empty-state">Nothing coming up.</div>'; return; }
+    el.innerHTML = days.map(function (day) {
+      return '<div class="upcoming-day"><div class="d">' + day + '</div>' +
+        byDay[day].slice(0, 2).map(function (a) {
+          return '<div class="item">📘 ' + escapeHtml(a.title) + ' due</div>';
+        }).join('') + '</div>';
+    }).join('');
+  }
+
+  function renderLogOptions(list) {
+    const sel = document.getElementById('logAssignment');
+    sel.innerHTML = '<option value="">General study</option>' + list.map(function (a) {
+      return '<option value="' + a.id + '">' + escapeHtml(a.subject) + ' — ' + escapeHtml(a.title) + '</option>';
+    }).join('');
+  }
+
+  async function loadState() {
+    const statusEl = document.getElementById('connectStatus');
+    try {
+      const state = await apiFetch('/api/state');
+      statusEl.innerHTML = 'Connected to your backend — <a onclick="document.getElementById(\'connectPanel\').open = true;">change</a>';
+      renderAssignmentsPreview(state.assignments);
+      renderLogOptions(state.assignments);
+      renderTimetablePreview(state.timetable);
+      renderTrainingPreview(state.activities);
+      renderUpcomingPreview(state.assignments);
+      document.getElementById('studyWeekValue').textContent = fmtMinutes(state.weekMinutes);
+      document.getElementById('studyWeekSub').textContent =
+        'across ' + state.subjectsThisWeek + ' subject' + (state.subjectsThisWeek === 1 ? '' : 's');
+      if (state.assignments.length) {
+        const soonest = state.assignments[0];
+        const u = urgencyFor(soonest.due_date);
+        document.getElementById('urgentValue').textContent = u.label.replace('Due in ', '');
+        document.getElementById('urgentSub').textContent = soonest.subject + ' ' + soonest.title;
+      }
+    } catch (err) {
+      if (err.message === 'not-connected') {
+        statusEl.innerHTML = 'Showing example data — <a onclick="document.getElementById(\'connectPanel\').open = true;">connect your backend</a> to make logging real.';
+      } else {
+        statusEl.innerHTML = 'Couldn\'t reach your backend (' + err.message + ') — <a onclick="document.getElementById(\'connectPanel\').open = true;">check connection</a>';
+      }
+    }
+  }
+
+  async function submitLog(ev) {
+    ev.preventDefault();
+    const assignmentId = document.getElementById('logAssignment').value || null;
+    const minutes = Number(document.getElementById('logMinutes').value);
+    const note = document.getElementById('logNote').value.trim();
+    if (!minutes || minutes <= 0) { alert('Enter how many minutes you studied.'); return; }
+    try {
+      await apiFetch('/api/log', { method: 'POST', body: JSON.stringify({ assignmentId: assignmentId, minutes: minutes, note: note }) });
+      document.getElementById('logMinutes').value = '';
+      document.getElementById('logNote').value = '';
+      loadState();
+    } catch (err) {
+      alert('Could not save: ' + err.message);
+    }
+  }
+
+  window.addEventListener('DOMContentLoaded', function () {
+    if (!isConnected()) {
+      document.getElementById('connectPanel').open = true;
+    }
+    document.getElementById('logForm').addEventListener('submit', submitLog);
+    loadState();
+  });
+</script>
+
+</body>
+</html>
