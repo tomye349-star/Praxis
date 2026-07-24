@@ -209,6 +209,7 @@ body {
 .badge.warning { color: var(--warning); background: var(--warning-bg); }
 .badge.serious { color: var(--serious); background: var(--serious-bg); }
 .badge.critical { color: var(--critical); background: var(--critical-bg); }
+.badge.before-school { color: #8a5200; background: #fdeecb; }
 
 .upcoming-strip { display: flex; gap: 10px; overflow-x: auto; margin-top: 16px; }
 .upcoming-day {
@@ -272,6 +273,69 @@ body {
 .cancelled-subject { text-decoration: line-through; color: var(--muted); }
 .period-entry-meta { font-size: 11px; color: var(--text-secondary); margin-top: 3px; margin-left: 70px; }
 .badge.free { color: var(--muted); background: var(--gridline); }
+
+/* live "now" timeline strip above Today's list — a vertical timeline of
+   today's periods (proportionally positioned by real bell start/end times)
+   with a moving red line showing the current time, so you can see where you
+   are up during the day at a glance. Only renders when real bell times are
+   available (Today only — cycle/week days never carry clock times). */
+.today-timeline {
+  position: relative;
+  margin-bottom: 16px;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px 14px 10px 58px;
+  min-height: 240px;
+}
+.timeline-block {
+  position: absolute;
+  left: 58px; right: 14px;
+  border-radius: 8px;
+  border-left: 4px solid var(--chip-accent, var(--blue));
+  background: var(--surface-1);
+  padding: 4px 8px;
+  font-size: 11px;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+.timeline-block.cancelled { opacity: 0.55; }
+.timeline-block .tb-time {
+  position: absolute;
+  left: -58px; top: 4px;
+  width: 52px;
+  font-size: 10px;
+  color: var(--text-secondary);
+  text-align: right;
+  padding-right: 6px;
+}
+.timeline-now-line {
+  position: absolute;
+  left: 0; right: 0;
+  height: 0;
+  border-top: 2px solid var(--critical);
+  z-index: 5;
+}
+.timeline-now-line::before {
+  content: attr(data-time);
+  position: absolute;
+  left: 0; top: -8px;
+  font-size: 9px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--critical);
+  padding: 1px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.timeline-now-line::after {
+  content: "";
+  position: absolute;
+  right: -3px; top: -3px;
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--critical);
+}
 
 /* weekly cycle view — Week A / Week B blocks, each a 5-day column grid of
    colour-coded class chips (styled after the HighHelp cycle view: no times,
