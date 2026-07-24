@@ -38,6 +38,11 @@ DASH_API_URL = os.environ["DASH_API_URL"].rstrip("/")
 DASH_TOKEN = os.environ["DASH_TOKEN"]
 DASH_HEADERS = {"Authorization": f"Bearer {DASH_TOKEN}", "Content-Type": "application/json"}
 
+# Classes starting at or before this time are treated as "before school"
+# (zero-period / early classes) even if the period code isn't literally "0" —
+# tune this if your school's normal first bell is earlier/later than 8:30am.
+BEFORE_SCHOOL_THRESHOLD_MIN = 8 * 60 + 30
+
 
 def kv_get(key):
     resp = requests.get(f"{DASH_API_URL}/api/kv/{key}", headers=DASH_HEADERS, timeout=30)
@@ -110,20 +115,35 @@ def _to_12h(t):
         return t
 
 
+def _parse_hm(raw):
+    """'09:25' -> 565 (minutes since midnight). None if unparseable/empty."""
+    if not raw:
+        return None
+    try:
+        h, m = raw.split(":")
+        return int(h) * 60 + int(m)
+    except Exception:
+        return None
+
+
 def _bell_time_lookup(bells):
     """
-    bells: [{period/bell: '1', startTime: '09:25', ...}, ...] -> {'1': '09:25'}
-    Kept in raw 24-hour form here (zero-padded, so it sorts correctly as a
-    plain string) — converted to 12-hour display form separately, at the
-    point of building each period's "time" field, so sorting never has to
-    deal with "1:15pm" vs "10:25am" string-sorting wrong.
+    bells: [{period/bell: '1', startTime: '09:25', endTime: '10:15', ...}, ...]
+    -> {'1': {'start': '09:25', 'end': '10:15'}}
+    Kept in raw 24-hour form here (zero-padded, so it sorts/compares correctly
+    as a plain string) — converted to 12-hour display form separately, at the
+    point of building each period's "time"/"endTime" fields. The raw form is
+    also passed straight through to the frontend as startRaw/endRaw, so the
+    live "now" line on the Today view can position itself with simple minutes-
+    since-midnight maths instead of re-parsing 12-hour display strings.
     """
     lookup = {}
     for b in bells or []:
         code = b.get("period") or b.get("bell")
         start = b.get("startTime") or b.get("time")
+        end = b.get("endTime")
         if code and start:
-            lookup[code] = start
+            lookup[code] = {"start": start, "end": end or ""}
     return lookup
 
 
@@ -169,6 +189,83 @@ def _period_sort_key(period_code, raw_time):
         return (2, "", period_code or "")
 
 
+def _is_before_school(period_code, start_min):
+    """
+    Flags "before school" classes (zero-period / early classes, e.g. a Tuesday
+    B maths class that runs before the normal school day starts) so the
+    frontend can badge them separately. Two heuristics, since cycle/week days
+    never carry bell times (only "today" does):
+      - period code is literally "0" (a very common convention) — works even
+        with no time data, so it still flags correctly in the week/cycle view.
+      - for "today", the actual bell start time is before the configured
+        BEFORE_SCHOOL_THRESHOLD_MIN, as a fallback in case this school's zero
+        period uses a different code.
+    If your school's period codes don't match either heuristic, adjust this
+    function directly (search sbhs_raw_timetable via GET /api/kv/sbhs_raw_timetable
+    to see the real period codes it's using).
+    """
+    if period_code == "0":
+        return True
+    if start_min is not None and start_min < BEFORE_SCHOOL_THRESHOLD_MIN:
+        return True
+    return False
+
+
+def _extract_day_periods(day_block, bells, subjects_lookup, variations=None, exclude_period_codes=None):
+    """
+    day_block shape (confirmed real output, identical for "today" and for
+    each of the 10 cycle days under timetable.json's `days` field):
+      { dayname, routine, rollcall: {...}, periods: { "1": {title, teacher, room, fullTeacher, ...}, ... }, dayNumber }
+
+    variations (only available for "today", from daytimetable.json's top-level
+    classVariations field) shape (confirmed real output):
+      { "<periodCode>": {period, year, title, teacher, type, casual, casualSurname, roomFrom, roomTo} }
+
+    `bells` may be None (cycle days don't carry bell times) — periods then
+    sort by period-code order instead of by time, and "time"/"endTime" come
+    back "" (startRaw/endRaw too), so the frontend's live "now" line simply
+    doesn't render for the week/cycle view — only "Today" has real clock time.
+    `exclude_period_codes` lets callers drop e.g. roll call ("RC") from the
+    weekly view, matching how HighHelp's cycle grid only shows real classes.
+    """
+    if not isinstance(day_block, dict):
+        return []
+    periods = day_block.get("periods") or {}
+    times = _bell_time_lookup(bells) if bells else {}
+    exclude = set(exclude_period_codes or [])
+    out = []
+    for period_code, info in periods.items():
+        if not isinstance(info, dict) or period_code in exclude:
+            continue
+        short_title = info.get("title") or "Unknown"
+        bell = times.get(period_code) or {}
+        raw_time = bell.get("start", "")
+        raw_end = bell.get("end", "")
+        start_min = _parse_hm(raw_time)
+        var = (variations or {}).get(period_code)
+        cancelled, note = _describe_variation(var)
+        subj = subjects_lookup.get(short_title) or {"name": short_title, "colour": ""}
+        out.append({
+            "period": period_code,
+            "time": _to_12h(raw_time) if raw_time else "",
+            "endTime": _to_12h(raw_end) if raw_end else "",
+            "startRaw": raw_time,
+            "endRaw": raw_end,
+            "beforeSchool": _is_before_school(period_code, start_min),
+            "subject": subj["name"],
+            "colour": subj["colour"],
+            "location": info.get("room") or "",
+            "teacher": info.get("fullTeacher") or "",
+            "cancelled": cancelled,
+            "note": note,
+            "_sort": _period_sort_key(period_code, raw_time),
+        })
+    out.sort(key=lambda p: p["_sort"])
+    for p in out:
+        p.pop("_sort", None)
+    return out
+
+
 def _describe_variation(var):
     """
     Returns (cancelled: bool, note: str or None) for one classVariations entry.
@@ -197,52 +294,6 @@ def _describe_variation(var):
     if room_to:
         notes.append("Room changed to " + str(room_to))
     return False, " · ".join(notes) if notes else None
-
-
-def _extract_day_periods(day_block, bells, subjects_lookup, variations=None, exclude_period_codes=None):
-    """
-    day_block shape (confirmed real output, identical for "today" and for
-    each of the 10 cycle days under timetable.json's `days` field):
-      { dayname, routine, rollcall: {...}, periods: { "1": {title, teacher, room, fullTeacher, ...}, ... }, dayNumber }
-
-    variations (only available for "today", from daytimetable.json's top-level
-    classVariations field) shape (confirmed real output):
-      { "<periodCode>": {period, year, title, teacher, type, casual, casualSurname, roomFrom, roomTo} }
-
-    `bells` may be None (cycle days don't carry bell times) — periods then
-    sort by period-code order instead of by time, and "time" comes back "".
-    `exclude_period_codes` lets callers drop e.g. roll call ("RC") from the
-    weekly view, matching how HighHelp's cycle grid only shows real classes.
-    """
-    if not isinstance(day_block, dict):
-        return []
-    periods = day_block.get("periods") or {}
-    times = _bell_time_lookup(bells) if bells else {}
-    exclude = set(exclude_period_codes or [])
-    out = []
-    for period_code, info in periods.items():
-        if not isinstance(info, dict) or period_code in exclude:
-            continue
-        short_title = info.get("title") or "Unknown"
-        raw_time = times.get(period_code, "")
-        var = (variations or {}).get(period_code)
-        cancelled, note = _describe_variation(var)
-        subj = subjects_lookup.get(short_title) or {"name": short_title, "colour": ""}
-        out.append({
-            "period": period_code,
-            "time": _to_12h(raw_time) if raw_time else "",
-            "subject": subj["name"],
-            "colour": subj["colour"],
-            "location": info.get("room") or "",
-            "teacher": info.get("fullTeacher") or "",
-            "cancelled": cancelled,
-            "note": note,
-            "_sort": _period_sort_key(period_code, raw_time),
-        })
-    out.sort(key=lambda p: p["_sort"])
-    for p in out:
-        p.pop("_sort", None)
-    return out
 
 
 def normalise(day_raw, full_raw):
