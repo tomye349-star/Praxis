@@ -1,18 +1,15 @@
 name: Sync dashboard data
 
-# This workflow is a placeholder scaffold. Once each data source is wired up
-# (Canvas, SBHS Student Portal, Strava, Garmin, Huawei Health), the "Fetch data"
-# step below will call real scripts in /scripts that read API tokens from
-# repo secrets (Settings -> Secrets and variables -> Actions) and write the
-# results into /data/*.json, which this workflow then commits back.
+# Runs on a schedule, pulls fresh data from Canvas and the SBHS Student
+# Portal, and pushes it into the private Cloudflare Worker backend (never
+# into this repo — that keeps your real timetable/assignments out of a
+# public GitHub Pages site). Strava/Garmin/Huawei sync will be added the
+# same way in a later update.
 
 on:
   schedule:
-    - cron: "0 */1 * * *"   # every hour — tune once real API calls exist
-  workflow_dispatch: {}       # lets you trigger a run manually from the Actions tab
-
-permissions:
-  contents: write
+    - cron: "0 * * * *"   # every hour
+  workflow_dispatch: {}     # lets you trigger a run manually from the Actions tab
 
 jobs:
   sync:
@@ -25,27 +22,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      # - name: Install dependencies
-      #   run: pip install -r scripts/requirements.txt
+      - name: Install dependencies
+        run: pip install -r scripts/requirements.txt
 
-      - name: Fetch data (placeholder — no-op until scripts exist)
-        run: |
-          echo "TODO: call scripts/fetch_canvas.py, fetch_sbhs.py, fetch_strava.py, fetch_garmin.py, fetch_huawei.py"
-          echo "Each script should write its output into /data/*.json"
+      - name: Sync Canvas assignments
+        run: python3 scripts/fetch_canvas.py
         env:
+          CANVAS_DOMAIN: ${{ secrets.CANVAS_DOMAIN }}
           CANVAS_TOKEN: ${{ secrets.CANVAS_TOKEN }}
-          SBHS_TOKEN: ${{ secrets.SBHS_TOKEN }}
-          STRAVA_CLIENT_ID: ${{ secrets.STRAVA_CLIENT_ID }}
-          STRAVA_CLIENT_SECRET: ${{ secrets.STRAVA_CLIENT_SECRET }}
-          STRAVA_REFRESH_TOKEN: ${{ secrets.STRAVA_REFRESH_TOKEN }}
-          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
-          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
-          HUAWEI_TOKEN: ${{ secrets.HUAWEI_TOKEN }}
+          DASH_API_URL: ${{ secrets.DASH_API_URL }}
+          DASH_TOKEN: ${{ secrets.DASH_TOKEN }}
 
-      - name: Commit updated data
-        run: |
-          git config user.name "dashboard-bot"
-          git config user.email "actions@users.noreply.github.com"
-          git add data/
-          git diff --quiet --cached || git commit -m "Update dashboard data"
-          git push
+      - name: Sync SBHS timetable
+        run: python3 scripts/fetch_sbhs.py
+        env:
+          SBHS_CLIENT_ID: ${{ secrets.SBHS_CLIENT_ID }}
+          SBHS_CLIENT_SECRET: ${{ secrets.SBHS_CLIENT_SECRET }}
+          DASH_API_URL: ${{ secrets.DASH_API_URL }}
+          DASH_TOKEN: ${{ secrets.DASH_TOKEN }}
+
+      # Next batch: Strava / Garmin / Huawei Health sync steps go here,
+      # each with its own secrets, each writing into the same private
+      # backend via its own kv_store key (e.g. "activities").
