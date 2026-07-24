@@ -58,12 +58,26 @@
 
 <script src="assets/app.js"></script>
 <script>
+  // School runs Monday-Friday only. The synced "today" data can be stale
+  // over a weekend (last sync was Friday, nothing new posts until Monday),
+  // so rather than trust the payload we check the real, live weekday and
+  // simply don't show a school day at all on Saturday/Sunday — regardless
+  // of what's sitting in the cached data.
+  function isWeekendNow() {
+    const day = new Date().getDay(); // 0 = Sunday, 6 = Saturday
+    return day === 0 || day === 6;
+  }
+
   // Today: one row per period/break, laid out like HighHelp — a slim time
   // column on the left, then either a coloured "period card" (a real class:
   // it has a teacher or a room) or a plain muted line (roll call, an empty
   // period-0 slot, recess, lunch — anything with no teacher/room attached).
   function renderToday(periods, hint) {
     const el = document.getElementById('todayList');
+    if (isWeekendNow()) {
+      el.innerHTML = '<div class="empty-state">It\'s the weekend — no school today.</div>';
+      return;
+    }
     if (!periods || !periods.length) {
       el.innerHTML = '<div class="empty-state">Nothing here yet' + (hint ? ' — ' + hint : '') + '.</div>';
       return;
@@ -105,6 +119,7 @@
   let nextUpPeriods = null;
 
   function computeNextUp(periods) {
+    if (isWeekendNow()) return { mode: 'weekend' };
     const withTimes = (periods || [])
       .map(function (p) {
         const startMin = parseHm(p.startRaw);
@@ -156,6 +171,12 @@
       return;
     }
     el.style.display = '';
+    if (next.mode === 'weekend') {
+      el.className = 'next-up-card done';
+      el.innerHTML = '<div class="nu-left"><div class="nu-title">It\'s the weekend 🎉</div>' +
+        '<div class="nu-subtitle">No school today — enjoy the break.</div></div>';
+      return;
+    }
     if (next.mode === 'done') {
       el.className = 'next-up-card done';
       el.innerHTML = '<div class="nu-left"><div class="nu-title">That\'s it for today 🎉</div>' +
@@ -203,6 +224,12 @@
   function renderTodayTimeline(periods) {
     const el = document.getElementById('todayTimeline');
     if (!el) return;
+    if (isWeekendNow()) {
+      todayTimelineBounds = null;
+      el.innerHTML = '';
+      el.style.display = 'none';
+      return;
+    }
     const withTimes = (periods || [])
       .map(function (p) {
         const startMin = parseHm(p.startRaw);
