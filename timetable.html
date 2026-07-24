@@ -29,6 +29,7 @@
     <div class="card timetable">
       <div class="section-block">
         <h3>Today</h3>
+        <div class="today-timeline" id="todayTimeline" style="display:none;"></div>
         <div id="todayList"><div class="empty-state">Loading…</div></div>
       </div>
     </div>
@@ -68,18 +69,99 @@
     el.innerHTML = periods.map(function (p) {
       const subjClass = p.cancelled ? 'period-subject cancelled-subject' : 'period-subject';
       const freeBadge = p.cancelled ? '<span class="badge free">Free</span>' : '';
+      const beforeBadge = p.beforeSchool ? '<span class="badge before-school">Before school</span>' : '';
       const metaBits = [p.teacher, p.location].filter(Boolean).map(escapeHtml).join(' · ');
       const noteBit = (p.note && !p.cancelled) ? (metaBits ? ' · ' : '') + escapeHtml(p.note) : '';
       return '<div class="period-entry">' +
         '<div class="period-entry-top">' +
         '<span class="period-time">' + escapeHtml(p.time || '') + '</span>' +
         '<span class="' + subjClass + '">' + escapeHtml(p.subject) + '</span>' +
-        freeBadge +
+        freeBadge + beforeBadge +
         '</div>' +
         (metaBits || noteBit ? '<div class="period-entry-meta">' + metaBits + noteBit + '</div>' : '') +
         '</div>';
     }).join('');
   }
+
+  // Live "now" line for Today — a small timeline strip that positions a red
+  // line at the current time, so you can see where you are up during the
+  // day at a glance (only possible for Today, since that's the only day
+  // SBHS gives us actual bell start/end times for — cycle days below have no
+  // clock times attached, only period order).
+  let todayTimelineBounds = null; // {dayStart, dayEnd} in minutes-since-midnight
+
+  function parseHm(raw) {
+    if (!raw) return null;
+    const parts = String(raw).split(':');
+    if (parts.length < 2) return null;
+    const h = parseInt(parts[0], 10), m = parseInt(parts[1], 10);
+    if (isNaN(h) || isNaN(m)) return null;
+    return h * 60 + m;
+  }
+
+  function renderTodayTimeline(periods) {
+    const el = document.getElementById('todayTimeline');
+    if (!el) return;
+    const withTimes = (periods || [])
+      .map(function (p) {
+        const startMin = parseHm(p.startRaw);
+        if (startMin === null) return null;
+        let endMin = parseHm(p.endRaw);
+        if (endMin === null || endMin <= startMin) endMin = startMin + 40;
+        return { p: p, startMin: startMin, endMin: endMin };
+      })
+      .filter(Boolean);
+
+    if (withTimes.length < 2) {
+      todayTimelineBounds = null;
+      el.innerHTML = '';
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = '';
+
+    const dayStart = Math.min.apply(null, withTimes.map(function (x) { return x.startMin; })) - 10;
+    const dayEnd = Math.max.apply(null, withTimes.map(function (x) { return x.endMin; })) + 10;
+    const span = Math.max(dayEnd - dayStart, 1);
+    todayTimelineBounds = { dayStart: dayStart, dayEnd: dayEnd };
+
+    const blocks = withTimes.map(function (x) {
+      const top = ((x.startMin - dayStart) / span) * 100;
+      const height = Math.max(((x.endMin - x.startMin) / span) * 100, 4);
+      const accentVar = x.p.colour ? '--chip-accent:#' + x.p.colour.replace(/[^0-9a-fA-F]/g, '') + ';' : '';
+      const style = 'style="' + accentVar + 'top:' + top + '%;height:' + height + '%;"';
+      const beforeBadge = x.p.beforeSchool ? ' <span class="badge before-school">Before school</span>' : '';
+      const subjClass = x.p.cancelled ? 'cancelled-subject' : '';
+      return '<div class="timeline-block' + (x.p.cancelled ? ' cancelled' : '') + '" ' + style + '>' +
+        '<span class="tb-time">' + escapeHtml(x.p.time || '') + '</span>' +
+        '<div class="' + subjClass + '">' + escapeHtml(x.p.subject) + beforeBadge + '</div>' +
+        '</div>';
+    }).join('');
+
+    el.innerHTML = blocks + '<div class="timeline-now-line" id="timelineNowLine"></div>';
+    updateNowLine();
+  }
+
+  function updateNowLine() {
+    const line = document.getElementById('timelineNowLine');
+    if (!line || !todayTimelineBounds) return;
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes();
+    const span = Math.max(todayTimelineBounds.dayEnd - todayTimelineBounds.dayStart, 1);
+    if (nowMin < todayTimelineBounds.dayStart || nowMin > todayTimelineBounds.dayEnd) {
+      line.style.display = 'none';
+      return;
+    }
+    line.style.display = '';
+    const top = ((nowMin - todayTimelineBounds.dayStart) / span) * 100;
+    line.style.top = top + '%';
+    const h = now.getHours(), m = now.getMinutes();
+    const hh = (h % 12) || 12;
+    const mm = m < 10 ? '0' + m : m;
+    line.setAttribute('data-time', hh + ':' + mm + (h < 12 ? 'am' : 'pm'));
+  }
+
+  setInterval(updateNowLine, 30000);
 
   // This week / cycle: Week A / Week B blocks, each a 5-day column grid of
   // colour-coded class chips — styled after HighHelp's cycle view. Falls
@@ -116,8 +198,9 @@
         const items = (days[wd].items || []).map(function (item) {
           const accent = item.colour ? 'style="--chip-accent:#' + item.colour.replace(/[^0-9a-fA-F]/g, '') + '"' : '';
           const subjClass = item.cancelled ? 'cs cancelled-subject' : 'cs';
+          const beforeBadge = item.beforeSchool ? ' <span class="badge before-school">Before school</span>' : '';
           return '<div class="class-chip' + (item.cancelled ? ' cancelled' : '') + '" ' + accent + '>' +
-            '<div class="' + subjClass + '">' + escapeHtml(item.subject) + (item.cancelled ? ' <span class="badge free">Free</span>' : '') + '</div>' +
+            '<div class="' + subjClass + '">' + escapeHtml(item.subject) + (item.cancelled ? ' <span class="badge free">Free</span>' : '') + beforeBadge + '</div>' +
             '<div class="cr">' + escapeHtml(item.location || '') + '</div>' +
             '</div>';
         }).join('');
@@ -145,6 +228,7 @@
   async function loadState() {
     if (!requireConnectionOrNotice('connectNotice')) {
       renderToday(null, 'connect your backend first');
+      renderTodayTimeline(null);
       renderWeekTable(null, 'connect your backend first');
       renderGroup('lookAheadList', null, { hint: 'connect your backend first' });
       return;
@@ -154,11 +238,13 @@
       const timetable = state.timetable;
       if (!timetable) {
         renderToday(null, 'no sync has run yet, check back after the next hourly sync');
+        renderTodayTimeline(null);
         renderWeekTable(null, 'no sync has run yet');
         renderGroup('lookAheadList', null, { hint: 'no sync has run yet' });
         return;
       }
       renderToday(timetable.today, 'nothing scheduled today');
+      renderTodayTimeline(timetable.today);
       renderWeekTable(timetable.week, 'nothing scheduled this cycle yet — this fills in once look-ahead data syncs');
       renderGroup('lookAheadList', timetable.lookAhead, { hint: 'look-ahead data isn\'t populated yet' });
     } catch (err) {
