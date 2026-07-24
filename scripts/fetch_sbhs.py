@@ -127,13 +127,16 @@ def _bell_time_lookup(bells):
     return lookup
 
 
-def _subject_title_lookup(subjects):
+def _subject_lookup(subjects):
     """
     `subjects` is keyed oddly (e.g. "11CHE 3") and periods reference the
-    *shortTitle* ("CHE 3") instead, so index by shortTitle -> full subject name.
+    *shortTitle* ("CHE 3") instead, so index by shortTitle -> {name, colour}.
     Accepts either the dict-of-codes shape (daytimetable.json) or the
     list-of-subjects shape (timetable.json) — confirmed against real output
-    from both endpoints.
+    from both endpoints. `colour` is SBHS's own per-subject hex colour (no
+    leading '#'), used so the weekly view's class chips match the same
+    colour-coding students already see in the Student Portal / apps like
+    HighHelp, instead of inventing our own.
     """
     lookup = {}
     values = subjects.values() if isinstance(subjects, dict) else (subjects if isinstance(subjects, list) else [])
@@ -142,30 +145,99 @@ def _subject_title_lookup(subjects):
             continue
         short = s.get("shortTitle")
         if short:
-            lookup[short] = s.get("subject") or s.get("title") or short
+            lookup[short] = {
+                "name": s.get("subject") or s.get("title") or short,
+                "colour": s.get("colour") or "",
+            }
     return lookup
 
 
-def _extract_day_periods(day_block, bells, subjects_lookup):
+def _period_sort_key(period_code, raw_time):
     """
-    day_block shape (confirmed real output):
-      { dayname, routine, rollcall: {...}, periods: { "1": {title, teacher, room, ...}, ... }, dayNumber }
+    Sort key for ordering a day's periods. Prefers an actual bell time when
+    we have one (only available for "today"); falls back to a natural
+    period-code order (RC first, then numeric periods in order, then
+    anything else) for cycle days that have no bell times attached.
+    """
+    if raw_time:
+        return (0, raw_time, "")
+    if period_code == "RC":
+        return (1, "", "")
+    try:
+        return (1, "%03d" % int(period_code), "")
+    except (TypeError, ValueError):
+        return (2, "", period_code or "")
+
+
+def _describe_variation(var):
+    """
+    Returns (cancelled: bool, note: str or None) for one classVariations entry.
+
+    Confirmed real shape (one real sample, a casual-teacher substitution):
+      {period, year, title, teacher, type: "replacement", casual, casualSurname,
+       roomFrom, roomTo}
+
+    An outright cancellation (no casual covering it) hasn't shown up in a real
+    sample yet, so it's handled defensively here: treated as cancelled/free
+    whenever the type mentions "cancel", or the type is a "replacement" with
+    no casual teacher actually assigned to cover it.
+    """
+    if not isinstance(var, dict):
+        return False, None
+    vtype = (var.get("type") or "").lower()
+    casual_surname = var.get("casualSurname")
+    room_to = var.get("roomTo")
+
+    if "cancel" in vtype or ("replace" in vtype and not casual_surname):
+        return True, "Cancelled — free period"
+
+    notes = []
+    if casual_surname:
+        notes.append("Covering: " + casual_surname)
+    if room_to:
+        notes.append("Room changed to " + str(room_to))
+    return False, " · ".join(notes) if notes else None
+
+
+def _extract_day_periods(day_block, bells, subjects_lookup, variations=None, exclude_period_codes=None):
+    """
+    day_block shape (confirmed real output, identical for "today" and for
+    each of the 10 cycle days under timetable.json's `days` field):
+      { dayname, routine, rollcall: {...}, periods: { "1": {title, teacher, room, fullTeacher, ...}, ... }, dayNumber }
+
+    variations (only available for "today", from daytimetable.json's top-level
+    classVariations field) shape (confirmed real output):
+      { "<periodCode>": {period, year, title, teacher, type, casual, casualSurname, roomFrom, roomTo} }
+
+    `bells` may be None (cycle days don't carry bell times) — periods then
+    sort by period-code order instead of by time, and "time" comes back "".
+    `exclude_period_codes` lets callers drop e.g. roll call ("RC") from the
+    weekly view, matching how HighHelp's cycle grid only shows real classes.
     """
     if not isinstance(day_block, dict):
         return []
     periods = day_block.get("periods") or {}
-    times = _bell_time_lookup(bells)  # raw "09:25"-style, for correct sorting
+    times = _bell_time_lookup(bells) if bells else {}
+    exclude = set(exclude_period_codes or [])
     out = []
     for period_code, info in periods.items():
-        if not isinstance(info, dict):
+        if not isinstance(info, dict) or period_code in exclude:
             continue
         short_title = info.get("title") or "Unknown"
         raw_time = times.get(period_code, "")
+        var = (variations or {}).get(period_code)
+        cancelled, note = _describe_variation(var)
+        subj = subjects_lookup.get(short_title) or {"name": short_title, "colour": ""}
         out.append({
+            "period": period_code,
             "time": _to_12h(raw_time) if raw_time else "",
-            "subject": subjects_lookup.get(short_title, short_title),
+            "subject": subj["name"],
+            "colour": subj["colour"],
             "location": info.get("room") or "",
-            "_sort": raw_time or "99:99",
+            "teacher": info.get("fullTeacher") or "",
+            "cancelled": cancelled,
+            "note": note,
+            "_sort": _period_sort_key(period_code, raw_time),
         })
     out.sort(key=lambda p: p["_sort"])
     for p in out:
@@ -185,49 +257,72 @@ def normalise(day_raw, full_raw):
         bells: [ {period, bell, startTime, endTime, type, bellDisplay}, ... ],
         timetable: {
           subjects: { "<yearcode>": {title, shortTitle, teacher, subject, ...} },
-          timetable: { dayname, routine, rollcall, periods: {"<periodCode>": {title, teacher, room, ...}}, dayNumber },
+          timetable: { dayname, routine, rollcall, periods: {"<periodCode>": {title, teacher, room, fullTeacher, ...}}, dayNumber },
           dayInfo: {...}
-        }
+        },
+        roomVariations: [...],
+        classVariations: { "<periodCode>": {period, year, title, teacher, type, casual, casualSurname, roomFrom, roomTo} },
+        shouldDisplayVariations: bool
       }
 
       timetable.json = {
         student, rollcall, advisor,
-        subjects: [ {title, shortTitle, teacher, subject, ...}, ... ],
-        days: <shape not confirmed yet — the full fortnight/cycle timetable>
+        subjects: [ {title, shortTitle, teacher, subject, colour, ...}, ... ],
+        days: {
+          "1": { dayname: "MonA", routine, rollcall, periods: {"<periodCode>": {...}}, dayNumber: "1" },
+          "2": { dayname: "TueA", ... },
+          ...
+          "10": { dayname: "FriB", ... }
+        }
       }
 
-    The `today` mapping below is exact. The `week` mapping is still
-    best-effort since `timetable.json`'s `days` field wasn't confirmed from a
-    real sample — if it comes out empty, check `sbhs_raw_timetable` (GET
-    /api/kv/sbhs_raw_timetable) for the real `days` shape and adjust the
-    `days_block` handling below to match.
+    `days` is confirmed real output — a 10-day fortnight (Week A Mon-Fri,
+    then Week B Mon-Fri), each day using the exact same {periods: {...}}
+    shape as "today". Cycle days never carry bell times or classVariations
+    (those are today-only concepts), so week periods sort by period-code
+    order and never show cancellations — only today's genuinely can be
+    cancelled/substituted, since only today's schedule is actually running.
+    Roll call ("RC") is deliberately excluded from `week`, matching how
+    HighHelp's own cycle view only lists real classes.
     """
     try:
         day_tt = (day_raw or {}).get("timetable") or {}
-        subjects_lookup = _subject_title_lookup(day_tt.get("subjects"))
-        today = _extract_day_periods(day_tt.get("timetable"), (day_raw or {}).get("bells"), subjects_lookup)
+        subjects_lookup = _subject_lookup(day_tt.get("subjects"))
+        today = _extract_day_periods(
+            day_tt.get("timetable"),
+            (day_raw or {}).get("bells"),
+            subjects_lookup,
+            variations=(day_raw or {}).get("classVariations"),
+        )
     except Exception:
         today = []
 
     try:
         week = []
-        days_block = (full_raw or {}).get("days")
-        full_subjects_lookup = _subject_title_lookup((full_raw or {}).get("subjects"))
-        bells_for_week = (full_raw or {}).get("bells") or (day_raw or {}).get("bells")
+        days_block = (full_raw or {}).get("days") or {}
+        full_subjects_lookup = _subject_lookup((full_raw or {}).get("subjects"))
 
-        if isinstance(days_block, dict):
-            entries = list(days_block.items())
-        elif isinstance(days_block, list):
-            entries = [(d.get("dayname") if isinstance(d, dict) else None, d) for d in days_block]
-        else:
-            entries = []
+        # Keys are "1".."10" as strings — sort numerically so Week A Mon..Fri
+        # comes before Week B Mon..Fri, not lexicographically ("1","10","2",...).
+        def _day_key(k):
+            try:
+                return int(k)
+            except (TypeError, ValueError):
+                return 999
 
-        for key, day_block in entries:
-            periods = _extract_day_periods(day_block, bells_for_week, full_subjects_lookup)
+        for key in sorted(days_block.keys(), key=_day_key):
+            day_block = days_block[key]
+            if not isinstance(day_block, dict):
+                continue
+            periods = _extract_day_periods(
+                day_block, bells=None, subjects_lookup=full_subjects_lookup, exclude_period_codes=["RC"]
+            )
             if not periods:
                 continue
-            day_label = (day_block.get("dayname") if isinstance(day_block, dict) else None) or key or ""
-            week.append({"day": day_label, "items": periods})
+            dayname = day_block.get("dayname") or ""  # e.g. "MonA", "TueB"
+            weekday = dayname[:3] if len(dayname) > 1 else dayname
+            cycle = dayname[3:] if len(dayname) > 3 else ""
+            week.append({"day": dayname, "weekday": weekday, "cycle": cycle, "items": periods})
     except Exception:
         week = []
 
