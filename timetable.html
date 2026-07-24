@@ -29,6 +29,7 @@
     <div class="card timetable">
       <div class="section-block">
         <h3>Today</h3>
+        <div class="next-up-card" id="nextUpCard" style="display:none;"></div>
         <div class="today-timeline" id="todayTimeline" style="display:none;"></div>
         <div id="todayList"><div class="empty-state">Loading…</div></div>
       </div>
@@ -57,9 +58,10 @@
 
 <script src="assets/app.js"></script>
 <script>
-  // Today: one enriched row per period — time, subject (struck through +
-  // "Free" badge if the school cancelled it), teacher, room, and a
-  // substitution note if a casual teacher is covering.
+  // Today: one row per period/break, laid out like HighHelp — a slim time
+  // column on the left, then either a coloured "period card" (a real class:
+  // it has a teacher or a room) or a plain muted line (roll call, an empty
+  // period-0 slot, recess, lunch — anything with no teacher/room attached).
   function renderToday(periods, hint) {
     const el = document.getElementById('todayList');
     if (!periods || !periods.length) {
@@ -67,21 +69,120 @@
       return;
     }
     el.innerHTML = periods.map(function (p) {
-      const subjClass = p.cancelled ? 'period-subject cancelled-subject' : 'period-subject';
-      const freeBadge = p.cancelled ? '<span class="badge free">Free</span>' : '';
+      const isClass = !!(p.teacher || p.location);
       const beforeBadge = p.beforeSchool ? '<span class="badge before-school">Before school</span>' : '';
-      const metaBits = [p.teacher, p.location].filter(Boolean).map(escapeHtml).join(' · ');
-      const noteBit = (p.note && !p.cancelled) ? (metaBits ? ' · ' : '') + escapeHtml(p.note) : '';
-      return '<div class="period-entry">' +
-        '<div class="period-entry-top">' +
-        '<span class="period-time">' + escapeHtml(p.time || '') + '</span>' +
+      const timeCol = '<div class="day-row-time">' + escapeHtml(p.time || '') + '</div>';
+      if (!isClass) {
+        const freeBadge = p.cancelled ? '<span class="badge free">Free</span>' : '';
+        return '<div class="day-row">' + timeCol +
+          '<div class="day-row-plain">' + escapeHtml(p.subject) + freeBadge + beforeBadge + '</div>' +
+          '</div>';
+      }
+      const subjClass = p.cancelled ? 'pc-subject cancelled-subject' : 'pc-subject';
+      const freeBadge = p.cancelled ? '<span class="badge free">Free</span>' : '';
+      const noteBit = (p.note && !p.cancelled) ? '<div class="pc-note">' + escapeHtml(p.note) + '</div>' : '';
+      const accent = p.colour ? ' style="--chip-accent:#' + p.colour.replace(/[^0-9a-fA-F]/g, '') + '"' : '';
+      return '<div class="day-row">' + timeCol +
+        '<div class="period-card' + (p.cancelled ? ' cancelled' : '') + '"' + accent + '>' +
+        '<div class="pc-main">' +
         '<span class="' + subjClass + '">' + escapeHtml(p.subject) + '</span>' +
         freeBadge + beforeBadge +
         '</div>' +
-        (metaBits || noteBit ? '<div class="period-entry-meta">' + metaBits + noteBit + '</div>' : '') +
+        '<div class="pc-meta">' +
+        (p.teacher ? '<span class="pc-teacher">' + escapeHtml(p.teacher) + '</span>' : '') +
+        (p.location ? '<span class="pc-room">' + escapeHtml(p.location) + '</span>' : '') +
+        '</div>' +
+        noteBit +
+        '</div>' +
         '</div>';
     }).join('');
   }
+
+  // "Time till next thing" card — the HighHelp-style widget Tom asked for:
+  // a big countdown to whatever's coming up next today (or to the end of
+  // whatever's on right now), so you can see at a glance how long until your
+  // next class/break without having to scan the whole list.
+  let nextUpPeriods = null;
+
+  function computeNextUp(periods) {
+    const withTimes = (periods || [])
+      .map(function (p) {
+        const startMin = parseHm(p.startRaw);
+        if (startMin === null) return null;
+        let endMin = parseHm(p.endRaw);
+        if (endMin === null || endMin <= startMin) endMin = startMin + 40;
+        return { p: p, startMin: startMin, endMin: endMin };
+      })
+      .filter(Boolean)
+      .sort(function (a, b) { return a.startMin - b.startMin; });
+
+    if (!withTimes.length) return null;
+
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+
+    for (let i = 0; i < withTimes.length; i++) {
+      const x = withTimes[i];
+      if (nowMin < x.startMin) {
+        return { mode: 'before', target: x.startMin, item: x.p };
+      }
+      if (nowMin < x.endMin) {
+        return { mode: 'during', target: x.endMin, item: x.p };
+      }
+    }
+    return { mode: 'done' };
+  }
+
+  function formatCountdown(targetMin, nowMin) {
+    const diff = Math.max(targetMin - nowMin, 0);
+    const totalMin = Math.ceil(diff);
+    const h = Math.floor(totalMin / 60), m = totalMin % 60;
+    if (h > 0) return h + 'h ' + m + 'm';
+    return m + 'm';
+  }
+
+  function renderNextUpCard(periods) {
+    nextUpPeriods = periods;
+    updateNextUpCard();
+  }
+
+  function updateNextUpCard() {
+    const el = document.getElementById('nextUpCard');
+    if (!el) return;
+    const next = computeNextUp(nextUpPeriods);
+    if (!next) {
+      el.style.display = 'none';
+      el.className = 'next-up-card';
+      return;
+    }
+    el.style.display = '';
+    if (next.mode === 'done') {
+      el.className = 'next-up-card done';
+      el.innerHTML = '<div class="nu-left"><div class="nu-title">That\'s it for today 🎉</div>' +
+        '<div class="nu-subtitle">Nothing else on the timetable — enjoy the rest of your day.</div></div>';
+      return;
+    }
+    el.className = 'next-up-card';
+    const now = new Date();
+    const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+    const countdown = formatCountdown(next.target, nowMin);
+    const isDuring = next.mode === 'during';
+    const label = isDuring ? 'Happening now' : 'Time till';
+    const until = isDuring ? 'Until it ends' : 'Until it starts';
+    const beforeBadge = next.item.beforeSchool ? ' <span class="badge before-school">Before school</span>' : '';
+    el.innerHTML =
+      '<div class="nu-left">' +
+      '<div class="nu-label">' + label + '</div>' +
+      '<div class="nu-title">' + escapeHtml(next.item.subject) + beforeBadge + '</div>' +
+      '<div class="nu-subtitle">' + escapeHtml(next.item.time || '') + (next.item.location ? ' · ' + escapeHtml(next.item.location) : '') + '</div>' +
+      '</div>' +
+      '<div class="nu-right">' +
+      '<div class="nu-countdown">' + countdown + '</div>' +
+      '<div class="nu-until">' + until + '</div>' +
+      '</div>';
+  }
+
+  setInterval(updateNextUpCard, 15000);
 
   // Live "now" line for Today — a small timeline strip that positions a red
   // line at the current time, so you can see where you are up during the
@@ -228,6 +329,7 @@
   async function loadState() {
     if (!requireConnectionOrNotice('connectNotice')) {
       renderToday(null, 'connect your backend first');
+      renderNextUpCard(null);
       renderTodayTimeline(null);
       renderWeekTable(null, 'connect your backend first');
       renderGroup('lookAheadList', null, { hint: 'connect your backend first' });
@@ -238,12 +340,14 @@
       const timetable = state.timetable;
       if (!timetable) {
         renderToday(null, 'no sync has run yet, check back after the next hourly sync');
+        renderNextUpCard(null);
         renderTodayTimeline(null);
         renderWeekTable(null, 'no sync has run yet');
         renderGroup('lookAheadList', null, { hint: 'no sync has run yet' });
         return;
       }
       renderToday(timetable.today, 'nothing scheduled today');
+      renderNextUpCard(timetable.today);
       renderTodayTimeline(timetable.today);
       renderWeekTable(timetable.week, 'nothing scheduled this cycle yet — this fills in once look-ahead data syncs');
       renderGroup('lookAheadList', timetable.lookAhead, { hint: 'look-ahead data isn\'t populated yet' });
