@@ -211,6 +211,50 @@ def _is_before_school(period_code, start_min):
     return False
 
 
+def _extract_breaks(bells, class_period_codes):
+    """
+    Bells that AREN'T a class period — recess, lunch, and any other bell SBHS
+    hands back that doesn't correspond to an entry in the day's `periods` dict
+    (roll call ("RC") is excluded here too, since it already has its own
+    periods-dict entry and is handled by _extract_day_periods instead).
+
+    Returned in the same shape as a period dict (subject/colour/location/
+    teacher/etc.) so the frontend can treat breaks and classes identically —
+    it tells them apart just by whether teacher/location are set. This is
+    also why colour/location/teacher are deliberately blank here: an empty
+    "class" renders as a plain muted row (matching HighHelp's Recess/Lunch
+    rows), no separate CSS path needed.
+    """
+    out = []
+    for b in bells or []:
+        code = b.get("period") or b.get("bell")
+        if not code or code in class_period_codes:
+            continue
+        start = b.get("startTime") or b.get("time")
+        if not start:
+            continue
+        end = b.get("endTime") or ""
+        label_raw = b.get("bellDisplay") or b.get("type") or code
+        label = str(label_raw).strip()
+        if label and label[0].islower():
+            label = label.title()
+        out.append({
+            "period": code,
+            "time": _to_12h(start),
+            "endTime": _to_12h(end) if end else "",
+            "startRaw": start,
+            "endRaw": end,
+            "beforeSchool": _is_before_school(code, _parse_hm(start)),
+            "subject": label or "Break",
+            "colour": "",
+            "location": "",
+            "teacher": "",
+            "cancelled": False,
+            "note": None,
+        })
+    return out
+
+
 def _extract_day_periods(day_block, bells, subjects_lookup, variations=None, exclude_period_codes=None):
     """
     day_block shape (confirmed real output, identical for "today" and for
@@ -339,12 +383,18 @@ def normalise(day_raw, full_raw):
     try:
         day_tt = (day_raw or {}).get("timetable") or {}
         subjects_lookup = _subject_lookup(day_tt.get("subjects"))
+        bells = (day_raw or {}).get("bells")
         today = _extract_day_periods(
             day_tt.get("timetable"),
-            (day_raw or {}).get("bells"),
+            bells,
             subjects_lookup,
             variations=(day_raw or {}).get("classVariations"),
         )
+        # Recess/lunch/etc: bells that aren't any class period, so Today shows
+        # the whole day's flow (matching HighHelp) and not just class blocks.
+        class_period_codes = set((day_tt.get("timetable") or {}).get("periods") or {})
+        breaks = _extract_breaks(bells, class_period_codes)
+        today = sorted(today + breaks, key=lambda p: p.get("startRaw") or "")
     except Exception:
         today = []
 
