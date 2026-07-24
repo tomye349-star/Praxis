@@ -116,6 +116,40 @@ export default {
         return json({ ok: true }, 200, cors);
       }
 
+      // Edit (PATCH) or delete (DELETE) a single logged study-time entry —
+      // lets an accidental or wrong-length log get corrected or removed
+      // instead of permanently skewing that subject's total. Editing only
+      // touches minutes/note; the log stays linked to whatever assignment
+      // (or "General") it was originally logged against.
+      const logIdMatch = url.pathname.match(/^\/api\/logs\/([^/]+)$/);
+      if (logIdMatch && request.method === "PATCH") {
+        const body = await request.json();
+        const sets = [];
+        const binds = [];
+        if ("minutes" in body) {
+          const minutes = Number(body.minutes);
+          if (!minutes || minutes <= 0) {
+            return json({ error: "minutes must be a positive number" }, 400, cors);
+          }
+          sets.push("minutes = ?"); binds.push(minutes);
+        }
+        if ("note" in body) { sets.push("note = ?"); binds.push(body.note || null); }
+        if (!sets.length) {
+          return json({ error: "nothing to update" }, 400, cors);
+        }
+        binds.push(logIdMatch[1]);
+        await env.DB.prepare(`UPDATE study_logs SET ${sets.join(", ")} WHERE id = ?`)
+          .bind(...binds)
+          .run();
+        return json({ ok: true }, 200, cors);
+      }
+      if (logIdMatch && request.method === "DELETE") {
+        await env.DB.prepare("DELETE FROM study_logs WHERE id = ?")
+          .bind(logIdMatch[1])
+          .run();
+        return json({ ok: true }, 200, cors);
+      }
+
       // Generic key/value store — used for the timetable feed, the merged
       // fitness activity feed, and rotating OAuth refresh tokens (SBHS, later
       // Strava). Automation reads/writes its own credentials here instead of
