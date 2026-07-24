@@ -73,7 +73,9 @@
 <script>
   let currentAssignments = [];
   let currentArchive = [];
+  let currentRecentLogs = [];
   let editingId = null;
+  let editingLogId = null;
 
   function renderEditForm(a) {
     return '<div class="row" style="flex-direction:column;align-items:stretch;gap:6px;">' +
@@ -140,19 +142,39 @@
     }).join('');
   }
 
+  function renderEditLogForm(l) {
+    return '<div class="row" style="flex-direction:column;align-items:stretch;gap:6px;">' +
+      '<div class="mini-form-row">' +
+      '<input type="number" min="1" id="editLogMinutes-' + l.id + '" value="' + escapeHtml(l.minutes) + '" placeholder="mins">' +
+      '<input type="text" id="editLogNote-' + l.id + '" value="' + escapeHtml(l.note || '') + '" placeholder="Note (optional)">' +
+      '</div>' +
+      '<div class="mini-form-row">' +
+      '<button type="button" onclick="saveEditLog(\'' + l.id + '\')">Save</button>' +
+      '<button type="button" class="mini-btn" onclick="cancelEditLog()">Cancel</button>' +
+      '</div></div>';
+  }
+
+  function renderLogRow(l) {
+    if (editingLogId === l.id) return renderEditLogForm(l);
+    const what = l.assignment_id
+      ? ((l.subject ? l.subject + ' — ' : '') + (l.assignment_title || 'Assignment'))
+      : 'General study';
+    return '<div class="row"><span>' + escapeHtml(what) + (l.note ? ' <span class="meta">(' + escapeHtml(l.note) + ')</span>' : '') + '</span>' +
+      '<span style="display:flex;align-items:center;gap:6px;">' +
+      '<span class="meta">' + fmtMinutes(l.minutes) + '</span>' +
+      '<button class="mini-btn" title="Edit" onclick="startEditLog(\'' + l.id + '\')">✏️</button>' +
+      '<button class="mini-btn" title="Delete" onclick="deleteLog(\'' + l.id + '\')">🗑</button>' +
+      '</span></div>';
+  }
+
   function renderRecentLogs(logs) {
+    currentRecentLogs = logs || [];
     const el = document.getElementById('recentLogsList');
     if (!logs || !logs.length) {
       el.innerHTML = '<div class="empty-state">No study time logged yet.</div>';
       return;
     }
-    el.innerHTML = logs.slice(0, 8).map(function (l) {
-      const what = l.assignment_id
-        ? ((l.subject ? l.subject + ' — ' : '') + (l.assignment_title || 'Assignment'))
-        : 'General study';
-      return '<div class="row"><span>' + escapeHtml(what) + (l.note ? ' <span class="meta">(' + escapeHtml(l.note) + ')</span>' : '') + '</span>' +
-        '<span class="meta">' + fmtMinutes(l.minutes) + '</span></div>';
-    }).join('');
+    el.innerHTML = logs.slice(0, 8).map(renderLogRow).join('');
   }
 
   function renderLogOptions(list) {
@@ -210,6 +232,43 @@
       loadState();
     } catch (err) {
       alert('Could not unarchive: ' + err.message);
+    }
+  }
+
+  function startEditLog(id) {
+    editingLogId = id;
+    renderRecentLogs(currentRecentLogs);
+  }
+
+  function cancelEditLog() {
+    editingLogId = null;
+    renderRecentLogs(currentRecentLogs);
+  }
+
+  async function saveEditLog(id) {
+    const minsEl = document.getElementById('editLogMinutes-' + id);
+    const noteEl = document.getElementById('editLogNote-' + id);
+    const minutes = Number(minsEl.value);
+    if (!minutes || minutes <= 0) { alert('Enter how many minutes you studied.'); return; }
+    try {
+      await apiFetch('/api/logs/' + id, {
+        method: 'PATCH',
+        body: JSON.stringify({ minutes: minutes, note: noteEl.value.trim() }),
+      });
+      editingLogId = null;
+      loadState();
+    } catch (err) {
+      alert('Could not save changes: ' + err.message);
+    }
+  }
+
+  async function deleteLog(id) {
+    if (!confirm("Delete this logged time entry? This will also reduce that subject's total.")) return;
+    try {
+      await apiFetch('/api/logs/' + id, { method: 'DELETE' });
+      loadState();
+    } catch (err) {
+      alert('Could not delete: ' + err.message);
     }
   }
 
